@@ -1,48 +1,53 @@
 import os
-from flask import Flask, jsonify, render_template_string
+import base64
+from flask import Flask, jsonify, render_template_string, request
+from google import genai
 
 app = Flask(__name__)
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-# Direct HTML for the Visual Interface
-UI_HTML = """
+# ACTUAL Camera Interface
+UI_LIVE = """
 <!DOCTYPE html>
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 50px 20px; }
-        .box { background: #1e1e1e; padding: 30px; border-radius: 20px; border: 1px solid #333; max-width: 400px; margin: auto; }
-        .btn { background: #00ff88; color: black; border: none; padding: 15px 30px; border-radius: 10px; font-weight: bold; cursor: pointer; width: 100%; font-size: 16px; }
-        #res { margin-top: 25px; padding: 15px; background: #252525; border-radius: 10px; display: none; text-align: left; border-left: 4px solid #00ff88; }
-        .val { color: #00ff88; font-weight: bold; }
+        body { font-family: sans-serif; background: #000; color: white; text-align: center; margin: 0; }
+        video { width: 100%; max-width: 400px; border-radius: 20px; border: 2px solid #38bdf8; }
+        .btn { background: #38bdf8; color: #000; padding: 20px; width: 80%; border: none; border-radius: 15px; font-weight: bold; margin-top: 20px; cursor: pointer; }
+        #log { margin-top: 20px; font-size: 14px; color: #38bdf8; }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h2>VitalScan AI</h2>
-        <p style="color: #888;">AI-Powered Contactless Vitals</p>
-        <button class="btn" onclick="scan()">START SCAN</button>
-        <div id="res">
-            <p>Heart Rate: <span id="hr" class="val">--</span> BPM</p>
-            <p>SpO2 Level: <span id="spo2" class="val">--</span> %</p>
-            <hr style="border: 0.5px solid #333;">
-            <p id="report" style="font-size: 13px; color: #bbb;"></p>
-        </div>
-    </div>
+    <h1>🩺 VitalScan Live</h1>
+    <video id="webcam" autoplay playsinline></video>
+    <br>
+    <button class="btn" onclick="captureAndScan()">SCAN MY FACE</button>
+    <div id="log">Ready to Scan...</div>
+
     <script>
-        function scan() {
-            const r = document.getElementById('res');
-            r.style.display = 'block';
-            r.innerHTML = 'Scanning with Gemini AI...';
-            fetch('/api/scan', {method: 'POST'})
-                .then(t => t.json())
-                .then(d => {
-                    r.innerHTML = `
-                        <p>Heart Rate: <span class="val">\${d.vitals.hr}</span> BPM</p>
-                        <p>SpO2 Level: <span class="val">\${d.vitals.spo2}</span> %</p>
-                        <hr style="border: 0.5px solid #333;">
-                        <p style="font-size: 13px; color: #bbb;"><b>AI Report:</b> \${d.ai_report}</p>`;
-                });
+        const video = document.getElementById('webcam');
+        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => video.srcObject = stream);
+
+        function captureAndScan() {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            const frame = canvas.toDataURL('image/jpeg').split(',')[1];
+            
+            document.getElementById('log').innerHTML = "AI Analyzing pixels...";
+            
+            fetch('/api/live_scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: frame })
+            })
+            .then(r => r.json())
+            .then(d => {
+                document.getElementById('log').innerHTML = "<b>Result:</b> " + d.analysis;
+            });
         }
     </script>
 </body>
@@ -51,11 +56,17 @@ UI_HTML = """
 
 @app.route("/")
 def home():
-    return render_template_string(UI_HTML)
+    return render_template_string(UI_LIVE)
 
-@app.route("/api/scan", methods=["POST"])
-def scan():
-    return jsonify({
-        "vitals": {"hr": 76, "spo2": 98},
-        "ai_report": "Patient vitals are stable. Normal cardiac rhythm detected via AI analysis."
-    })
+@app.route("/api/live_scan", methods=["POST"])
+def live_scan():
+    data = request.json['image']
+    # Sending ACTUAL frame to Gemini Vision
+    response = client.models.generate_content(
+        model="gemini-1.5-flash",
+        contents=[
+            "Analyze this face frame for vascular fluctuations. Estimate Heart Rate and SpO2 based on skin pixel intensity.",
+            {'mime_type': 'image/jpeg', 'data': data}
+        ]
+    )
+    return jsonify({"analysis": response.text})
