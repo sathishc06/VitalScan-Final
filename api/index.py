@@ -1,52 +1,49 @@
 import os
-import base64
 from flask import Flask, jsonify, render_template_string, request
 from google import genai
 
 app = Flask(__name__)
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-UI_FINGER = """
+UI_FIXED = """
 <!DOCTYPE html>
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: sans-serif; background: #000; color: white; text-align: center; margin: 0; padding: 20px; }
-        .camera-box { width: 250px; height: 250px; border-radius: 50%; border: 4px solid #38bdf8; overflow: hidden; margin: 20px auto; position: relative; }
+        body { font-family: sans-serif; background: #000; color: white; text-align: center; padding: 20px; }
+        .circle { width: 180px; height: 180px; border-radius: 50%; border: 4px solid #00ff88; overflow: hidden; margin: 20px auto; }
         video { width: 100%; height: 100%; object-fit: cover; }
-        .btn { background: #38bdf8; color: #000; padding: 20px; width: 100%; border: none; border-radius: 15px; font-weight: bold; font-size: 18px; }
-        #res { margin-top: 20px; color: #38bdf8; font-weight: bold; }
+        .btn { background: #00ff88; color: #000; padding: 18px; width: 100%; border: none; border-radius: 12px; font-weight: bold; font-size: 16px; }
+        #res { margin-top: 25px; font-size: 20px; color: #00ff88; }
     </style>
 </head>
 <body>
-    <h2>🩺 VitalScan: Finger Scan</h2>
-    <p style="font-size: 14px; color: #888;">Place your index finger over the camera</p>
-    <div class="camera-box">
-        <video id="webcam" autoplay playsinline></video>
-    </div>
-    <button class="btn" onclick="scanFinger()">ANALYZE BLOOD FLOW</button>
-    <div id="res">Ready...</div>
+    <h3>🩺 VitalScan: Finger Mode</h3>
+    <p style="font-size: 13px; color: #aaa;">Place finger FIRMLY on camera lens</p>
+    <div class="circle"><video id="v" autoplay playsinline></video></div>
+    <button class="btn" onclick="quickScan()">FAST SCAN (3s)</button>
+    <div id="res">Waiting for finger...</div>
 
     <script>
-        const v = document.getElementById('webcam');
+        const v = document.getElementById('v');
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => v.srcObject = s);
 
-        function scanFinger() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 300; canvas.height = 300;
-            canvas.getContext('2d').drawImage(v, 0, 0, 300, 300);
-            const data = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
+        function quickScan() {
+            const c = document.createElement('canvas');
+            c.width = 100; c.height = 100; // Super small for speed
+            c.getContext('2d').drawImage(v, 0, 0, 100, 100);
+            const data = c.toDataURL('image/jpeg', 0.3).split(',')[1];
             
-            document.getElementById('res').innerText = "AI extracting pulse from pixels...";
+            document.getElementById('res').innerText = "AI Processing...";
             
-            fetch('/api/finger_scan', {
+            fetch('/api/fast_scan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image: data })
+                body: JSON.stringify({ img: data })
             })
             .then(r => r.json())
-            .then(d => { document.getElementById('res').innerHTML = d.result; });
+            .then(d => { document.getElementById('res').innerHTML = d.val; });
         }
     </script>
 </body>
@@ -55,16 +52,15 @@ UI_FINGER = """
 
 @app.route("/")
 def home():
-    return render_template_string(UI_FINGER)
+    return render_template_string(UI_FIXED)
 
-@app.route("/api/finger_scan", methods=["POST"])
-def finger_scan():
-    img_data = request.json['image']
-    # Prompting Gemini to act as a Pulse Oximeter
-    prompt = "This is a close-up image of a finger over a camera lens. Analyze the red/pink pixel density to estimate Heart Rate (BPM) and SpO2 (%)."
-    
+@app.route("/api/fast_scan", methods=["POST"])
+def fast_scan():
+    img = request.json['img']
+    # Professional prompt for fast extraction
+    prompt = "Clinical extraction: Heart Rate (BPM) and SpO2 from this finger pulse frame. Short response only."
     resp = client.models.generate_content(
         model="gemini-1.5-flash",
-        contents=[prompt, {'mime_type': 'image/jpeg', 'data': img_data}]
+        contents=[prompt, {'mime_type': 'image/jpeg', 'data': img}]
     )
-    return jsonify({"result": resp.text})
+    return jsonify({"val": resp.text})
